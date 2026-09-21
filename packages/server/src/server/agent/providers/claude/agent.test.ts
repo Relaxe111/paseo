@@ -1493,6 +1493,69 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
   });
 });
 
+describe("ClaudeAgentClient.resumeSession history directory", () => {
+  test.each(["session", "provider", "daemon"])(
+    "replays history from the effective %s environment",
+    async (source) => {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-history-env-"));
+      const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+      const daemonDir = path.join(root, "daemon");
+      const providerDir = path.join(root, "provider");
+      const sessionDir = path.join(root, "session");
+      const cwd = root;
+      const sessionId = "history-env-session";
+      process.env.CLAUDE_CONFIG_DIR = daemonDir;
+
+      try {
+        for (const [configDir, text] of [
+          [daemonDir, "daemon transcript"],
+          [providerDir, "provider transcript"],
+          [sessionDir, "session transcript"],
+        ]) {
+          const projectDir = claudeProjectDirSync(cwd, { configDir });
+          await fs.mkdir(projectDir, { recursive: true });
+          await fs.writeFile(
+            path.join(projectDir, `${sessionId}.jsonl`),
+            `${JSON.stringify({
+              type: "user",
+              uuid: "user-history-env",
+              sessionId,
+              cwd,
+              message: { role: "user", content: text },
+            })}\n`,
+          );
+        }
+        const client = new ClaudeAgentClient({
+          logger: createTestLogger(),
+          runtimeSettings:
+            source === "daemon" ? undefined : { env: { CLAUDE_CONFIG_DIR: providerDir } },
+          resolveBinary: async () => "/test/claude/bin",
+        });
+        const session = await client.resumeSession(
+          { provider: "claude", sessionId, nativeHandle: sessionId, metadata: { cwd } },
+          { cwd },
+          source === "session" ? { env: { CLAUDE_CONFIG_DIR: sessionDir } } : undefined,
+        );
+        const items: AgentTimelineItem[] = [];
+        try {
+          for await (const event of session.streamHistory()) {
+            if (event.type === "timeline") items.push(event.item);
+          }
+        } finally {
+          await session.close();
+        }
+        expect(items).toEqual([
+          { type: "user_message", text: `${source} transcript`, messageId: "user-history-env" },
+        ]);
+      } finally {
+        if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+        else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+        await fs.rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
 describe("ClaudeAgentClient.listImportableSessions", () => {
   test("uses the latest native custom title and leaves fixture mtimes unchanged", async () => {
     const tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-import-"));
