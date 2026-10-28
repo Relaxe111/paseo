@@ -1,0 +1,29 @@
+{
+  "sourceBase": "c3a5e3ecdeebed98264c2d47a10b6e07176916b8",
+  "pluginSource": "bd84d414",
+  "provider": "codex/gpt-6-astra",
+  "saved": {
+    "summaryId": "77a5d36e-98c2-477e-9c3c-7f3e0a64121f",
+    "revision": 1,
+    "sourceAgentId": "f3670b94-fc76-48a4-ac5c-1008e45fb9d7",
+    "sourceTitle": "R28 real persisted summary proof",
+    "cutoff": "2026-10-28T20:35:01.889Z",
+    "savedAt": "2026-10-28T20:35:07.842Z",
+    "sections": {
+      "task": "R28 summary: preserve exact source session UUID f3670b94-fc76-48a4-ac5c-1008e45fb9d7 and four sections.",
+      "decisions": "Supported providers only.",
+      "currentState": "Ready for review.",
+      "nextStep": "Installed readback."
+    },
+    "text": "Task\nR28 summary: preserve exact source session UUID f3670b94-fc76-48a4-ac5c-1008e45fb9d7 and four sections.\n\nDecisions\nSupported providers only.\n\nCurrent state\nReady for review.\n\nNext step\nInstalled readback."
+  },
+  "rereadEqual": true,
+  "restartedLatestEqual": true,
+  "clipboardTransport": "macOS pbcopy/pbpaste; original plain text restored",
+  "clipboardSha256": "92dd29e9b4a29c772b998490ac72d82e6366096e9513fa4ea7ff0af8ce872a14",
+  "limits": [
+    "In-process API adapter, no daemon RPC or installed UI exercised",
+    "Native clipboard transport verified; SummarySheet copyText was not exercised",
+    "Idle source receives foreground turn; running source refused by AgentManager"
+  ]
+}

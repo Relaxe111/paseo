@@ -150,3 +150,18 @@ describe("SessionAuthorization", () => {
     expect(() => parseDaemonPermissions(["hub.execution.*"])).toThrow("Invalid daemon permission");
   });
 });
+
+test("compact summary generation requires source-write authority", () => {
+  const reader = new SessionAuthorization(["workspace.read"]);
+  const writer = new SessionAuthorization(["workspace.write"]);
+  expect(reader.allowsInbound(inboundMessage("agent.compact_summary.generate.request"))).toBe(
+    false,
+  );
+  expect(reader.allowsOutbound(outboundMessage("agent.compact_summary.generate.response"))).toBe(
+    false,
+  );
+  expect(writer.allowsInbound(inboundMessage("agent.compact_summary.generate.request"))).toBe(true);
+  expect(writer.allowsOutbound(outboundMessage("agent.compact_summary.generate.response"))).toBe(
+    true,
+  );
+});

@@ -658,6 +658,20 @@ type ScheduleListPayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/list/response" }
 >["payload"];
+export type AgentCompactSummaryPayload = Extract<
+  SessionOutboundMessage,
+  { type: "agent.compact_summary.generate.response" }
+>["payload"];
+export interface AgentCompactSummaryResult {
+  sections: NonNullable<AgentCompactSummaryPayload["sections"]>;
+  cutoff: NonNullable<AgentCompactSummaryPayload["cutoff"]>;
+}
+/** Options for an explicit foreground summary turn on the source session. */
+export interface FetchAgentCompactSummaryOptions {
+  requestId?: string;
+  timeout?: number;
+  signal?: AbortSignal;
+}
 type ScheduleInspectPayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/inspect/response" }
@@ -6582,6 +6596,47 @@ export class DaemonClient {
       },
       responseType: "schedule/list/response",
     });
+  }
+
+  requireAgentCompactSummary(): void {
+    this.ensureConnected();
+    if (!this.supportsHostFeature("agentCompactSummary")) {
+      throw Object.assign(new Error("Update the host to generate compact session summaries."), {
+        code: "unsupported_capability",
+      });
+    }
+  }
+
+  async generateAgentCompactSummary(
+    agentId: string,
+    options?: FetchAgentCompactSummaryOptions,
+  ): Promise<AgentCompactSummaryResult> {
+    this.requireAgentCompactSummary();
+    options?.signal?.throwIfAborted();
+    const payload = await this.sendCorrelatedSessionRequest<
+      "agent.compact_summary.generate.response",
+      AgentCompactSummaryPayload
+    >({
+      requestId: options?.requestId,
+      timeout: options?.timeout,
+      message: {
+        type: "agent.compact_summary.generate.request",
+        agentId,
+      },
+      responseType: "agent.compact_summary.generate.response",
+    });
+    if (payload.error !== null) {
+      throw new Error(payload.error);
+    }
+    if (!payload.sections || !payload.cutoff) {
+      throw new Error("The host returned no compact summary payload.");
+    }
+    return { sections: payload.sections, cutoff: payload.cutoff };
+  }
+
+  supportsHostFeature(feature: keyof NonNullable<ServerInfoStatusPayload["features"]>): boolean {
+    this.ensureConnected();
+    return this.lastServerInfoMessage?.features?.[feature] === true;
   }
 
   async scheduleInspect(options: InspectScheduleOptions): Promise<ScheduleInspectPayload> {

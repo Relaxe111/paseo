@@ -1,4 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { AgentManager } from "../agent-manager.js";
+import { AgentStorage } from "../agent-storage.js";
+import { CompactSummaryProviderRunner } from "../../kontor/compact-summary-provider-run.js";
+import {
+  CompactSummaryGenerator,
+  type CompactSummaryAgentView,
+} from "../../kontor/compact-summary-generator.js";
+import { CompactSummaryGenerationStore } from "../../kontor/compact-summary-generation-store.js";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -118,3 +126,89 @@ CHILD_SENTINEL in your own response.
     }
   }, 300_000);
 });
+
+test("R28 generates and persists a real Codex summary for the exact source session", async () => {
+  const logger = createTestLogger();
+  const root = mkdtempSync(path.join(os.tmpdir(), "r28-real-summary-"));
+  const client = new CodexAppServerAgentClient(logger);
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  let agentId: string | undefined;
+  try {
+    const { models } = await client.fetchCatalog({ scope: "workspace", cwd: root, force: false });
+    const model = models.find((candidate) => candidate.isDefault) ?? models[0];
+    if (!model) throw new Error("Codex returned no model for R28 generation");
+    const source = await manager.createAgent(
+      { provider: "codex", model: model.id, cwd: root, modeId: "read-only" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    agentId = source.id;
+    const seedRun = manager.runAgent(
+      source.id,
+      "Do not use tools. We are preparing the R28 summary feature. Decision: preserve the session UUID and save four sections. Current state: implementation is ready for review. Next step: reviewer checks installed readback. Acknowledge in one sentence.",
+    );
+    await manager.waitForAgentRunStart(source.id);
+    const runner = new CompactSummaryProviderRunner({
+      isDevBuild: false,
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    await expect(
+      runner.generateSections({
+        id: source.id,
+        title: "R28 busy source",
+        provider: `codex/${model.id}`,
+        status: "running",
+        updatedAt: new Date().toISOString(),
+        lastUserMessageAt: null,
+        activeTurnStartedAt: null,
+      }),
+    ).rejects.toThrow("already has an active run");
+    await seedRun;
+    const live = manager.getAgent(source.id)!;
+    const view: CompactSummaryAgentView = {
+      id: source.id,
+      title: "R28 real source",
+      provider: `codex/${model.id}`,
+      status: "idle",
+      updatedAt: live.updatedAt.toISOString(),
+      lastUserMessageAt: live.lastUserMessageAt?.toISOString() ?? null,
+      activeTurnStartedAt: null,
+    };
+    const dir = path.join(root, "kontor", "compact-summary-generation-v1");
+    const generator = new CompactSummaryGenerator(new CompactSummaryGenerationStore(dir), runner);
+    const generated = await generator.generate(view);
+    for (const section of Object.values(generated.sections))
+      expect(section.trim().length).toBeGreaterThan(0);
+    expect(JSON.stringify(generated.sections)).toContain("R28");
+    await manager.closeAgent(source.id);
+    const restartedStore = new CompactSummaryGenerationStore(dir);
+    const restarted = new CompactSummaryGenerator(restartedStore, runner);
+    expect(await restarted.generate(view)).toEqual(generated);
+    expect(await restartedStore.read(source.id)).toMatchObject({
+      revision: 1,
+      cutoff: generated.cutoff,
+      sections: generated.sections,
+    });
+    expect(await restartedStore.read("00000000-0000-4000-8000-000000000099")).toBeNull();
+    process.stdout.write(
+      "R28_REAL_PROVIDER_PROOF " +
+        JSON.stringify({
+          agentId: source.id,
+          provider: view.provider,
+          cutoff: generated.cutoff,
+          sections: generated.sections,
+          revision: 1,
+          reopenedStoreEqual: true,
+          runningSourceRefused: true,
+          otherSessionEmpty: true,
+        }) +
+        "\n",
+    );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 180_000);

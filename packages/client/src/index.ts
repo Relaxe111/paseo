@@ -393,7 +393,21 @@ export interface PaseoAgentHandle {
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
+export interface PaseoCompactSummarySections {
+  task: string;
+  decisions: string;
+  currentState: string;
+  nextStep: string;
+}
+
+export interface PaseoCompactSummaryPayload {
+  sections: PaseoCompactSummarySections;
+  cutoff: string;
+}
+
 export interface PaseoAgentActions {
+  /** Runs a foreground summary turn on an idle source. Requires agentCompactSummary and workspace.write. */
+  generateCompactSummary(agentId: string): Promise<PaseoCompactSummaryPayload>;
   list(options: PaseoAgentListOptions & { subscribe: {} }): Promise<
     PaseoAgentListResult & {
       subscriptionId: string;
@@ -496,6 +510,7 @@ export interface PaseoConfigActions {
 }
 
 export interface PaseoApi {
+  supportsHostFeature(feature: "agentCompactSummary"): boolean;
   readonly hosts: PaseoHostActions;
   dispose(): Promise<void>;
   observeEvents: DaemonClient["observeEvents"];
@@ -720,6 +735,7 @@ export function createPaseoApi(
   }
 
   return {
+    supportsHostFeature: (feature) => daemonClient.supportsHostFeature(feature),
     dispose,
     hosts: createHostActions(daemonClient, { own, signal: lifetime.signal, api: createPaseoApi }),
     observeEvents,
@@ -763,6 +779,7 @@ export function createPaseoApi(
       subscribe: listenWorkspaces,
     },
     agents: {
+      generateCompactSummary: (agentId) => daemonClient.generateAgentCompactSummary(agentId),
       list: listAgents,
       ref: (agent) => createAgentHandle(agent),
       create: (options) => createAgent(options),

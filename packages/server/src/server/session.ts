@@ -1,3 +1,7 @@
+import { CompactSummaryGenerationStore } from "./kontor/compact-summary-generation-store.js";
+import { CompactSummaryGenerator } from "./kontor/compact-summary-generator.js";
+import { CompactSummaryProviderRunner } from "./kontor/compact-summary-provider-run.js";
+import { KontorSession } from "./session/kontor/kontor-session.js";
 import { type WorkspaceRuntimeStore } from "./workspace-runtime-store/index.js";
 import type { AgentMessageDelivery } from "./agent/agent-messages/index.js";
 import { AgentDirectory } from "./agent/directory.js";
@@ -816,6 +820,7 @@ export class Session {
   private readonly voiceSessions: VoiceSessions;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly kontorSession: KontorSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly usageSession: UsageSession;
   private readonly speechModelsSession: SpeechModelsSession;
@@ -1006,6 +1011,22 @@ export class Session {
       host: { emit: (msg) => this.emit(msg) },
       scheduleService,
       logger: this.sessionLogger,
+    });
+    const compactSummaryGenerator = new CompactSummaryGenerator(
+      new CompactSummaryGenerationStore(
+        join(this.paseoHome, "kontor", "compact-summary-generation-v1"),
+      ),
+      new CompactSummaryProviderRunner({
+        isDevBuild: process.env.NODE_ENV !== "production",
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      }),
+    );
+    this.kontorSession = new KontorSession({
+      host: { emit: (msg) => this.emit(msg) },
+      resolveCompactSummaryAgent: (agentId) => this.resolveCompactSummaryAgent(agentId),
+      compactSummaryGenerator,
     });
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
@@ -2452,11 +2473,68 @@ export class Session {
   }
 
   private dispatchHostServiceMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "agent.compact_summary.generate.request") {
+      return this.kontorSession.handleCompactSummaryGenerateRequest(msg);
+    }
     return (
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
       this.speechModelsSession.dispatch(msg)
     );
+  }
+
+  private async resolveCompactSummaryAgent(agentId: string): Promise<
+    | {
+        ok: true;
+        agent: {
+          id: string;
+          title: string | null;
+          status: string;
+          provider: string;
+          updatedAt: string;
+          lastUserMessageAt: string | null;
+          activeTurnStartedAt: string | null;
+        };
+      }
+    | { ok: false; error: string }
+  > {
+    const resolved = await this.resolveAgentIdentifier(agentId);
+    if (!resolved.ok) {
+      return { ok: false, error: resolved.error };
+    }
+    const live = this.agentManager.getAgent(resolved.agentId);
+    if (live) {
+      const payload = await this.buildAgentPayload(live);
+      return { ok: true, agent: this.toCompactSummaryAgentView(payload) };
+    }
+    const stored = await this.agentStorage.get(resolved.agentId);
+    if (stored && !stored.internal) {
+      return {
+        ok: true,
+        agent: this.toCompactSummaryAgentView(this.buildStoredAgentPayload(stored)),
+      };
+    }
+    return { ok: false, error: "This session is not on this host, so no summary was generated." };
+  }
+
+  private toCompactSummaryAgentView(payload: AgentSnapshotPayload): {
+    id: string;
+    title: string | null;
+    status: string;
+    provider: string;
+    updatedAt: string;
+    lastUserMessageAt: string | null;
+    activeTurnStartedAt: string | null;
+  } {
+    return {
+      id: payload.id,
+      title: payload.title,
+      status: payload.status,
+      provider: payload.provider,
+      updatedAt: payload.updatedAt,
+      lastUserMessageAt: payload.lastUserMessageAt ?? null,
+      activeTurnStartedAt: payload.activeTurn?.startedAt ?? null,
+    };
   }
 
   private dispatchWorkspaceLifecycleMessage(msg: SessionInboundMessage): Promise<void> | undefined {
